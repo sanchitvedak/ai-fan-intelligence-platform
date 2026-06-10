@@ -4,8 +4,18 @@ import plotly.express as px
 
 st.set_page_config(page_title="NJ World Cup AI Fan Pulse", layout="wide")
 
-st.title("⚽ NJ World Cup AI Fan Pulse")
-st.caption("A fun AI-style dashboard tracking fans, travel, events, sentiment, and match-day energy around MetLife Stadium.")
+st.title("🎟️ Fan Intelligence Platform")
+
+st.markdown("""
+### Make smarter event decisions
+
+Get AI-powered recommendations for:
+- 🚗 When to leave
+- 🚆 Best transportation options
+- 🎟️ Ticket buying opportunities
+- 🍺 Watch party recommendations
+- 📈 Crowd and demand forecasts
+""")
 
 data = pd.DataFrame({
     "Country": ["Argentina", "Brazil", "England", "France", "Mexico", "USA", "India", "Germany"],
