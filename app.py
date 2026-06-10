@@ -1,87 +1,104 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 
-st.set_page_config(page_title="NJ World Cup AI Fan Pulse", layout="wide")
+st.set_page_config(page_title="Fan Intelligence Platform", layout="wide")
 
 st.title("🎟️ Fan Intelligence Platform")
+st.caption("AI-powered event insights that help fans make smarter decisions.")
 
-st.markdown("""
-### Make smarter event decisions
+tabs = st.tabs([
+    "🏠 Overview",
+    "🚗 Matchday Advisor",
+    "🍺 Watch Parties",
+    "🎟 Ticket Intelligence",
+    "🤖 Daily AI Insight"
+])
 
-Get AI-powered recommendations for:
-- 🚗 When to leave
-- 🚆 Best transportation options
-- 🎟️ Ticket buying opportunities
-- 🍺 Watch party recommendations
-- 📈 Crowd and demand forecasts
-""")
+with tabs[0]:
+    st.header("Event Intelligence Overview")
+    st.metric("Fan Experience Score", "82 / 100")
+    st.metric("Crowd Risk", "Medium")
+    st.metric("Transit Recommendation", "Use NJ Transit")
 
-data = pd.DataFrame({
-    "Country": ["Argentina", "Brazil", "England", "France", "Mexico", "USA", "India", "Germany"],
-    "Fans Estimated": [12000, 15000, 9000, 8500, 18000, 22000, 6000, 7000],
-    "Avg Ticket Price": [920, 880, 760, 810, 690, 740, 620, 700],
-    "Transit Usage %": [62, 58, 71, 64, 55, 68, 74, 69],
-    "Fan Sentiment": [92, 89, 76, 81, 94, 84, 88, 79],
-    "Pub/Event Mentions": [430, 510, 390, 360, 620, 700, 280, 310]
-})
+with tabs[1]:
+    st.header("🚗 Matchday Advisor")
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Estimated Fans", f"{data['Fans Estimated'].sum():,}")
-col2.metric("Avg Ticket Price", f"${int(data['Avg Ticket Price'].mean())}")
-col3.metric("Avg Transit Usage", f"{int(data['Transit Usage %'].mean())}%")
-col4.metric("Fan Happiness Score", f"{int(data['Fan Sentiment'].mean())}/100")
-
-st.divider()
-
-left, right = st.columns(2)
-
-with left:
-    st.subheader("🌎 Fan Nations Around NJ")
-    fig = px.bar(data, x="Country", y="Fans Estimated", title="Estimated Fans by Country")
-    st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    st.subheader("🎟️ Ticket Price Watch")
-    fig = px.scatter(
-        data,
-        x="Fans Estimated",
-        y="Avg Ticket Price",
-        size="Pub/Event Mentions",
-        color="Country",
-        title="Ticket Price vs Fan Demand"
+    city = st.selectbox(
+        "Where are you traveling from?",
+        ["Montclair", "Verona", "Hoboken", "Jersey City", "NYC"]
     )
-    st.plotly_chart(fig, use_container_width=True)
 
-left2, right2 = st.columns(2)
-
-with left2:
-    st.subheader("🚆 Transit Readiness")
-    fig = px.bar(data, x="Country", y="Transit Usage %", title="Estimated Public Transit Usage")
-    st.plotly_chart(fig, use_container_width=True)
-
-with right2:
-    st.subheader("🔥 Fan Energy Index")
-    data["Fan Energy Index"] = (
-        data["Fan Sentiment"] * 0.4 +
-        data["Pub/Event Mentions"] / data["Pub/Event Mentions"].max() * 40 +
-        data["Transit Usage %"] * 0.2
+    kickoff = st.selectbox(
+        "Event Start Time",
+        ["1:00 PM", "4:00 PM", "7:00 PM"]
     )
-    fig = px.bar(data.sort_values("Fan Energy Index", ascending=False), x="Country", y="Fan Energy Index")
-    st.plotly_chart(fig, use_container_width=True)
 
-st.divider()
+    travel_times = {
+        "Montclair": 28,
+        "Verona": 24,
+        "Hoboken": 31,
+        "Jersey City": 35,
+        "NYC": 42
+    }
 
-st.subheader("🤖 AI-Generated Insight")
-top_country = data.sort_values("Fan Energy Index", ascending=False).iloc[0]
-st.success(
-    f"{top_country['Country']} currently has the highest Fan Energy Index. "
-    f"This combines fan sentiment, event chatter, and expected public transit usage."
-)
+    current_time = travel_times[city]
+    predicted_time = int(current_time * 1.75)
 
-st.subheader("📍 Product Manager Angle")
-st.write("""
-This dashboard demonstrates how AI can combine messy public signals — travel behavior, event chatter,
-ticket pricing, and fan sentiment — into a simple decision-support product for fans, venues, cities,
-transit agencies, and local businesses.
-""")
+    col1, col2 = st.columns(2)
+    col1.metric("Current Travel Time", f"{current_time} mins")
+    col2.metric("Predicted Travel Time Near Event", f"{predicted_time} mins")
+
+    st.success(
+        f"""
+Recommended action: Leave at least 90 minutes before the event.
+
+From {city}, travel time may increase from {current_time} mins to {predicted_time} mins near event time.
+
+Best recommendation: Use transit if possible and avoid driving close to kickoff.
+"""
+    )
+
+with tabs[2]:
+    st.header("🍺 Watch Party Finder")
+
+    watch_parties = pd.DataFrame({
+        "Venue": ["Montclair Brewery", "Hoboken Biergarten", "Verona Inn", "Jersey City Barcade"],
+        "Best For": ["Local fans", "High-energy crowd", "Low wait", "Group hangout"],
+        "Crowd Forecast": ["Medium", "High", "Low", "Medium"],
+        "Suggested Action": [
+            "Arrive 45 mins early",
+            "Reserve if possible",
+            "Good backup option",
+            "Best for groups"
+        ]
+    })
+
+    st.dataframe(watch_parties, use_container_width=True)
+
+with tabs[3]:
+    st.header("🎟 Ticket Intelligence")
+
+    st.metric("Current Ticket Demand", "High")
+    st.metric("Predicted Direction", "⬆️ Rising")
+    st.metric("Buy / Wait Recommendation", "Buy Early")
+
+    st.warning(
+        "Ticket demand is elevated. If this were live data, AI would compare current prices against historical movement and recommend whether to buy now or wait."
+    )
+
+with tabs[4]:
+    st.header("🤖 Daily AI Insight")
+
+    st.info(
+        """
+Today's Fan Intelligence Briefing:
+
+Traffic risk is expected to rise closer to event time.
+
+Fans traveling from Montclair, Verona, Hoboken, Jersey City, and NYC should plan for longer travel times.
+
+Transit is currently the safer recommendation compared to driving.
+
+Watch parties in Hoboken are expected to have the highest crowd energy.
+"""
+    )
