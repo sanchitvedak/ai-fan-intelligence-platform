@@ -11,10 +11,6 @@ st.set_page_config(page_title="Fan Intelligence Platform", layout="wide")
 
 @st.cache_data(ttl=900)
 def get_metlife_weather():
-    """
-    Pulls live weather for MetLife Stadium using Open-Meteo.
-    No API key required.
-    """
     latitude = 40.8135
     longitude = -74.0745
 
@@ -64,9 +60,6 @@ def get_metlife_weather():
 
 
 def weather_condition_label(code):
-    if code is None:
-        return "Unavailable"
-
     weather_map = {
         0: "Clear",
         1: "Mostly clear",
@@ -91,6 +84,9 @@ def weather_condition_label(code):
         99: "Thunderstorm with hail"
     }
 
+    if code is None:
+        return "Unavailable"
+
     return weather_map.get(code, "Mixed conditions")
 
 
@@ -98,7 +94,6 @@ def weather_recommendation(weather):
     temp = weather.get("temperature")
     rain_prob = weather.get("rain_probability")
     wind = weather.get("wind_speed")
-    condition = weather_condition_label(weather.get("weather_code"))
 
     if temp is None:
         return "Weather data is currently unavailable. Use traffic and transit signals for now."
@@ -123,9 +118,93 @@ def weather_recommendation(weather):
     return " ".join(recommendation_parts)
 
 
+def calculate_weather_score(weather):
+    temp = weather.get("temperature")
+    rain_prob = weather.get("rain_probability") or 0
+    wind = weather.get("wind_speed") or 0
+
+    if temp is None:
+        return 60
+
+    score = 90
+
+    if rain_prob >= 60:
+        score -= 25
+    elif rain_prob >= 30:
+        score -= 12
+
+    if wind >= 25:
+        score -= 15
+    elif wind >= 18:
+        score -= 8
+
+    if temp >= 90 or temp <= 35:
+        score -= 18
+    elif temp >= 85 or temp <= 45:
+        score -= 8
+
+    return max(40, min(score, 100))
+
+
+def generate_fan_brief(weather):
+    temp = weather.get("temperature")
+    rain_prob = weather.get("rain_probability")
+    wind = weather.get("wind_speed")
+    condition = weather_condition_label(weather.get("weather_code"))
+
+    if temp is None:
+        return {
+            "headline": "Use travel signals first today.",
+            "brief": "Live weather is currently unavailable, so the platform is prioritizing traffic, transit, and arrival-window risk.",
+            "recommendation": "Leave early and check transit before departing.",
+            "confidence": "62%"
+        }
+
+    weather_score = calculate_weather_score(weather)
+
+    if weather_score >= 80:
+        weather_read = "Weather conditions are favorable for fans."
+    elif weather_score >= 65:
+        weather_read = "Weather conditions are manageable, but fans should prepare for minor comfort risks."
+    else:
+        weather_read = "Weather may create friction for fans arriving early or spending time outside."
+
+    if rain_prob is None:
+        rain_text = "Rain probability is unavailable."
+    else:
+        rain_text = f"Rain risk is currently {rain_prob}%."
+
+    if wind is None:
+        wind_text = "Wind data is unavailable."
+    else:
+        wind_text = f"Wind speed is around {round(wind)} mph."
+
+    brief = (
+        f"{weather_read} Current conditions near MetLife are {condition.lower()}, "
+        f"with temperature around {round(temp)}°F. {rain_text} {wind_text} "
+        "The bigger fan-experience risk remains arrival congestion rather than weather."
+    )
+
+    recommendation = (
+        "Take transit where possible, leave before peak arrival windows, "
+        "and avoid making last-minute ticket or venue decisions."
+    )
+
+    confidence = "82%" if weather_score >= 75 else "74%"
+
+    return {
+        "headline": "Leave early. Transit is still the safer default.",
+        "brief": brief,
+        "recommendation": recommendation,
+        "confidence": confidence
+    }
+
+
 weather = get_metlife_weather()
 condition_label = weather_condition_label(weather.get("weather_code"))
 weather_tip = weather_recommendation(weather)
+weather_score = calculate_weather_score(weather)
+fan_brief = generate_fan_brief(weather)
 
 
 # -----------------------------
@@ -180,7 +259,6 @@ st.markdown("""
     max-width: 960px;
 }
 
-/* Full-width top navigation */
 div[data-testid="stSegmentedControl"] {
     width: 100% !important;
     background: rgba(255,255,255,.94);
@@ -301,6 +379,35 @@ div[data-testid="stSegmentedControl"] button {
     box-shadow: 0 12px 28px rgba(23,43,77,.07);
 }
 
+.brief-card {
+    padding: 34px;
+    border-radius: 28px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f5ff 60%, #eef9ff 100%);
+    border: 1px solid #ddd6fe;
+    box-shadow: 0 18px 42px rgba(124,58,237,.12);
+}
+
+.brief-card h2 {
+    font-size: 34px;
+    margin-bottom: 14px;
+}
+
+.brief-card p {
+    color: #374151;
+    font-size: 19px;
+    line-height: 1.65;
+}
+
+.confidence-pill {
+    display: inline-block;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    color: #166534;
+    font-weight: 900;
+    margin-top: 10px;
+}
+
 h1, h2, h3, p, label, div {
     color: #111827;
 }
@@ -353,12 +460,8 @@ page = st.segmented_control(
 if page == "Overview":
     st.markdown(f"""
     <div class="action-panel">
-        <h2>Today’s Recommendation: Take transit and leave early 🚆</h2>
-        <p>
-        The main risk is still the arrival window. Current weather near MetLife is
-        <b>{condition_label}</b>, and the fan experience risk is driven more by congestion
-        than weather right now.
-        </p>
+        <h2>{fan_brief["headline"]}</h2>
+        <p>{fan_brief["brief"]}</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -367,18 +470,18 @@ if page == "Overview":
     with col1:
         st.markdown("""
         <div class="card">
-            <h3>Fan Score</h3>
+            <h3>Fan Experience Score</h3>
             <div class="metric-number">82</div>
-            <p>Good overall experience expected.</p>
+            <p>Strong baseline, but arrival timing matters.</p>
         </div>
         """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("""
+        st.markdown(f"""
         <div class="card">
-            <h3>Main Risk</h3>
-            <div class="metric-number">Traffic</div>
-            <p>Peak arrival may create delays.</p>
+            <h3>Weather Impact Score</h3>
+            <div class="metric-number">{weather_score}</div>
+            <p>Live signal based on rain, wind, and temperature.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -431,17 +534,14 @@ elif page == "Decision Engine":
 elif page == "Signal Inputs":
     st.header("Signals we are watching")
 
-    weather_status = "Live"
-    weather_action = weather_tip
-
     signals = pd.DataFrame({
         "Signal": ["Traffic", "Transit", "Tickets", "Weather", "Watch parties"],
-        "Status": ["Simulated", "Simulated", "Simulated", weather_status, "Simulated"],
+        "Status": ["Simulated", "Simulated", "Simulated", "Live", "Simulated"],
         "Action": [
             "Leave earlier",
             "Prefer transit",
             "Avoid last-minute buying",
-            weather_action,
+            weather_tip,
             "Arrive early"
         ]
     })
@@ -450,19 +550,12 @@ elif page == "Signal Inputs":
 
 elif page == "AI Brief":
     st.markdown(f"""
-    <div class="soft-panel">
-        <h2>🧠 AI Brief</h2>
-        <p>
-        Current MetLife weather is <b>{condition_label}</b> with a temperature of
-        <b>{'unavailable' if weather['temperature'] is None else str(round(weather['temperature'])) + '°F'}</b>.
-        </p>
-        <p>
-        {weather_tip}
-        </p>
-        <p>
-        Traffic remains the biggest fan-experience risk in this prototype.
-        Best fan action: leave early, avoid last-minute ticket decisions, and choose transit when possible.
-        </p>
+    <div class="brief-card">
+        <h2>🧠 Today's Fan Intelligence Brief</h2>
+        <p><b>{fan_brief["headline"]}</b></p>
+        <p>{fan_brief["brief"]}</p>
+        <p><b>Recommended action:</b> {fan_brief["recommendation"]}</p>
+        <div class="confidence-pill">Recommendation confidence: {fan_brief["confidence"]}</div>
     </div>
     """, unsafe_allow_html=True)
 
