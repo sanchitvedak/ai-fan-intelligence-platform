@@ -1,7 +1,136 @@
 import streamlit as st
 import pandas as pd
+import requests
 
 st.set_page_config(page_title="Fan Intelligence Platform", layout="wide")
+
+
+# -----------------------------
+# Live Weather Helper
+# -----------------------------
+
+@st.cache_data(ttl=900)
+def get_metlife_weather():
+    """
+    Pulls live weather for MetLife Stadium using Open-Meteo.
+    No API key required.
+    """
+    latitude = 40.8135
+    longitude = -74.0745
+
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={latitude}"
+        f"&longitude={longitude}"
+        "&current=temperature_2m,precipitation,rain,weather_code,wind_speed_10m"
+        "&hourly=precipitation_probability"
+        "&temperature_unit=fahrenheit"
+        "&wind_speed_unit=mph"
+        "&timezone=America%2FNew_York"
+    )
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        weather = response.json()
+
+        current = weather.get("current", {})
+        hourly = weather.get("hourly", {})
+
+        rain_probability = None
+        if "precipitation_probability" in hourly and hourly["precipitation_probability"]:
+            rain_probability = hourly["precipitation_probability"][0]
+
+        return {
+            "temperature": current.get("temperature_2m"),
+            "precipitation": current.get("precipitation"),
+            "rain": current.get("rain"),
+            "wind_speed": current.get("wind_speed_10m"),
+            "rain_probability": rain_probability,
+            "weather_code": current.get("weather_code"),
+            "source": "Live weather from Open-Meteo"
+        }
+
+    except Exception:
+        return {
+            "temperature": None,
+            "precipitation": None,
+            "rain": None,
+            "wind_speed": None,
+            "rain_probability": None,
+            "weather_code": None,
+            "source": "Weather unavailable"
+        }
+
+
+def weather_condition_label(code):
+    if code is None:
+        return "Unavailable"
+
+    weather_map = {
+        0: "Clear",
+        1: "Mostly clear",
+        2: "Partly cloudy",
+        3: "Cloudy",
+        45: "Fog",
+        48: "Fog",
+        51: "Light drizzle",
+        53: "Drizzle",
+        55: "Heavy drizzle",
+        61: "Light rain",
+        63: "Rain",
+        65: "Heavy rain",
+        71: "Light snow",
+        73: "Snow",
+        75: "Heavy snow",
+        80: "Rain showers",
+        81: "Rain showers",
+        82: "Heavy rain showers",
+        95: "Thunderstorm",
+        96: "Thunderstorm with hail",
+        99: "Thunderstorm with hail"
+    }
+
+    return weather_map.get(code, "Mixed conditions")
+
+
+def weather_recommendation(weather):
+    temp = weather.get("temperature")
+    rain_prob = weather.get("rain_probability")
+    wind = weather.get("wind_speed")
+    condition = weather_condition_label(weather.get("weather_code"))
+
+    if temp is None:
+        return "Weather data is currently unavailable. Use traffic and transit signals for now."
+
+    recommendation_parts = []
+
+    if rain_prob is not None and rain_prob >= 50:
+        recommendation_parts.append("Carry rain gear and allow extra travel time.")
+    elif rain_prob is not None and rain_prob >= 25:
+        recommendation_parts.append("Pack a light jacket or umbrella just in case.")
+    else:
+        recommendation_parts.append("Weather risk looks low right now.")
+
+    if wind is not None and wind >= 20:
+        recommendation_parts.append("Wind may affect outdoor comfort near the stadium.")
+
+    if temp >= 85:
+        recommendation_parts.append("Hydration will matter for fans arriving early.")
+    elif temp <= 45:
+        recommendation_parts.append("Dress warmly, especially if using transit or walking.")
+
+    return " ".join(recommendation_parts)
+
+
+weather = get_metlife_weather()
+condition_label = weather_condition_label(weather.get("weather_code"))
+weather_tip = weather_recommendation(weather)
+
+
+# -----------------------------
+# Styling
+# -----------------------------
 
 st.markdown("""
 <style>
@@ -133,6 +262,37 @@ div[data-testid="stSegmentedControl"] button {
     margin-top: 20px;
 }
 
+.live-card {
+    padding: 24px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #ffffff 0%, #ecfeff 100%);
+    border: 1px solid #bae6fd;
+    box-shadow: 0 12px 30px rgba(14,165,233,.10);
+    min-height: 165px;
+}
+
+.live-card h3 {
+    color: #0f172a;
+    font-size: 20px;
+    margin-bottom: 8px;
+}
+
+.live-card p {
+    color: #475569;
+    font-size: 16px;
+}
+
+.live-badge {
+    display: inline-block;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: #dcfce7;
+    color: #166534;
+    font-weight: 800;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
 .soft-panel {
     background: white;
     border: 1px solid #ebe7dd;
@@ -151,6 +311,11 @@ h1, h2, h3, p, label, div {
 </style>
 """, unsafe_allow_html=True)
 
+
+# -----------------------------
+# Hero
+# -----------------------------
+
 st.markdown("""
 <div class="hero">
     <div class="badge">✨ PM Showcase · AI Decision Product</div>
@@ -161,6 +326,11 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+
+# -----------------------------
+# Navigation
+# -----------------------------
 
 page = st.segmented_control(
     "Navigation",
@@ -175,13 +345,19 @@ page = st.segmented_control(
     label_visibility="collapsed"
 )
 
+
+# -----------------------------
+# Pages
+# -----------------------------
+
 if page == "Overview":
-    st.markdown("""
+    st.markdown(f"""
     <div class="action-panel">
         <h2>Today’s Recommendation: Take transit and leave early 🚆</h2>
         <p>
-        The main risk is not the event itself — it is the arrival window.
-        Fans who wait too long may face avoidable traffic delays.
+        The main risk is still the arrival window. Current weather near MetLife is
+        <b>{condition_label}</b>, and the fan experience risk is driven more by congestion
+        than weather right now.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -207,11 +383,14 @@ if page == "Overview":
         """, unsafe_allow_html=True)
 
     with col3:
-        st.markdown("""
-        <div class="card">
-            <h3>Best Action</h3>
-            <div class="metric-number">Transit</div>
-            <p>Most reliable option today.</p>
+        temp_display = "Unavailable" if weather["temperature"] is None else f"{round(weather['temperature'])}°F"
+        rain_display = "Unavailable" if weather["rain_probability"] is None else f"{weather['rain_probability']}%"
+        st.markdown(f"""
+        <div class="live-card">
+            <div class="live-badge">LIVE SIGNAL</div>
+            <h3>MetLife Weather</h3>
+            <div class="metric-number">{temp_display}</div>
+            <p>{condition_label} · Rain risk: {rain_display}</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -244,20 +423,25 @@ elif page == "Decision Engine":
     <div class="tip">
         Recommendation: If you are coming from <b>{city}</b>, leave early or take transit.
         Waiting until peak arrival could add about <b>{delay} minutes</b>.
+        <br><br>
+        Weather note: <b>{weather_tip}</b>
     </div>
     """, unsafe_allow_html=True)
 
 elif page == "Signal Inputs":
     st.header("Signals we are watching")
 
+    weather_status = "Live"
+    weather_action = weather_tip
+
     signals = pd.DataFrame({
         "Signal": ["Traffic", "Transit", "Tickets", "Weather", "Watch parties"],
-        "Status": ["Rising", "Moderate", "High demand", "Low risk", "Busy"],
+        "Status": ["Simulated", "Simulated", "Simulated", weather_status, "Simulated"],
         "Action": [
             "Leave earlier",
             "Prefer transit",
             "Avoid last-minute buying",
-            "No major concern",
+            weather_action,
             "Arrive early"
         ]
     })
@@ -265,15 +449,19 @@ elif page == "Signal Inputs":
     st.dataframe(signals, use_container_width=True, hide_index=True)
 
 elif page == "AI Brief":
-    st.markdown("""
+    st.markdown(f"""
     <div class="soft-panel">
         <h2>🧠 AI Brief</h2>
         <p>
-        Traffic is the biggest fan-experience risk today. Transit is the safer option.
-        Ticket demand remains high, and busy watch parties are expected in high-energy areas.
+        Current MetLife weather is <b>{condition_label}</b> with a temperature of
+        <b>{'unavailable' if weather['temperature'] is None else str(round(weather['temperature'])) + '°F'}</b>.
         </p>
         <p>
-        Best fan action: leave early, avoid last-minute ticket decisions, and pick your venue before peak crowd buildup.
+        {weather_tip}
+        </p>
+        <p>
+        Traffic remains the biggest fan-experience risk in this prototype.
+        Best fan action: leave early, avoid last-minute ticket decisions, and choose transit when possible.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -285,13 +473,13 @@ elif page == "Product Roadmap":
         "Phase": ["V1", "V2", "V3", "V4"],
         "Build": [
             "Decision-support prototype",
-            "Live weather + event data",
-            "Traffic, ticket, transit integrations",
+            "Live weather integration",
+            "Traffic, ticket, and transit integrations",
             "Personalized AI recommendations"
         ],
         "PM Value": [
             "Validate user problem",
-            "Replace dummy signals",
+            "Replace first dummy signal with live data",
             "Increase usefulness",
             "Scale into fan copilot"
         ]
