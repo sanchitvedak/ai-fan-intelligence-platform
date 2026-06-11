@@ -67,7 +67,7 @@ def weather_condition_label(code):
         3: "Cloudy",
         45: "Fog",
         48: "Fog",
-        51: "Light drizzle",
+        51: "Fog",
         53: "Drizzle",
         55: "Heavy drizzle",
         61: "Light rain",
@@ -146,57 +146,134 @@ def calculate_weather_score(weather):
     return max(40, min(score, 100))
 
 
-def generate_fan_brief(weather):
+# -----------------------------
+# Travel Intelligence Helper
+# -----------------------------
+
+def get_travel_model(origin):
+    """
+    Simulated travel model for MVP.
+    Later this can be replaced with Google Maps, Mapbox, or NJ Transit APIs.
+    """
+
+    origin_data = {
+        "Montclair": {
+            "drive_now": 28,
+            "drive_peak": 49,
+            "transit": 44,
+            "parking_risk": "High",
+            "transit_reliability": "Medium",
+            "reason": "Driving is fast now, but peak congestion near Route 3 and stadium exits can erase the advantage."
+        },
+        "Verona": {
+            "drive_now": 24,
+            "drive_peak": 42,
+            "transit": 48,
+            "parking_risk": "High",
+            "transit_reliability": "Low",
+            "reason": "Driving is still the fastest option, but the delay risk rises sharply closer to the event."
+        },
+        "Hoboken": {
+            "drive_now": 31,
+            "drive_peak": 61,
+            "transit": 39,
+            "parking_risk": "High",
+            "transit_reliability": "High",
+            "reason": "Transit is more predictable than driving from dense urban areas during event arrival windows."
+        },
+        "Jersey City": {
+            "drive_now": 35,
+            "drive_peak": 67,
+            "transit": 45,
+            "parking_risk": "High",
+            "transit_reliability": "High",
+            "reason": "Driving delay risk is high and transit provides a more reliable arrival window."
+        },
+        "NYC": {
+            "drive_now": 42,
+            "drive_peak": 78,
+            "transit": 52,
+            "parking_risk": "Very High",
+            "transit_reliability": "High",
+            "reason": "Cross-Hudson traffic and stadium-area congestion make transit the safer default."
+        }
+    }
+
+    data = origin_data[origin]
+
+    drive_delay = data["drive_peak"] - data["drive_now"]
+
+    if data["transit"] < data["drive_peak"]:
+        recommended_mode = "Transit"
+    else:
+        recommended_mode = "Drive early"
+
+    if drive_delay >= 30:
+        confidence = 86
+    elif drive_delay >= 20:
+        confidence = 78
+    else:
+        confidence = 70
+
+    if data["parking_risk"] == "Very High":
+        confidence += 5
+
+    confidence = min(confidence, 92)
+
+    return {
+        **data,
+        "drive_delay": drive_delay,
+        "recommended_mode": recommended_mode,
+        "confidence": confidence
+    }
+
+
+def generate_fan_brief(weather, travel):
     temp = weather.get("temperature")
     rain_prob = weather.get("rain_probability")
     wind = weather.get("wind_speed")
     condition = weather_condition_label(weather.get("weather_code"))
 
     if temp is None:
-        return {
-            "headline": "Use travel signals first today.",
-            "brief": "Live weather is currently unavailable, so the platform is prioritizing traffic, transit, and arrival-window risk.",
-            "recommendation": "Leave early and check transit before departing.",
-            "confidence": "62%"
-        }
-
-    weather_score = calculate_weather_score(weather)
-
-    if weather_score >= 80:
-        weather_read = "Weather conditions are favorable for fans."
-    elif weather_score >= 65:
-        weather_read = "Weather conditions are manageable, but fans should prepare for minor comfort risks."
+        weather_text = "Live weather is currently unavailable."
     else:
-        weather_read = "Weather may create friction for fans arriving early or spending time outside."
+        weather_text = (
+            f"Weather near MetLife is {condition.lower()} with temperature around "
+            f"{round(temp)}°F."
+        )
 
-    if rain_prob is None:
-        rain_text = "Rain probability is unavailable."
-    else:
-        rain_text = f"Rain risk is currently {rain_prob}%."
+        if rain_prob is not None:
+            weather_text += f" Rain risk is {rain_prob}%."
 
-    if wind is None:
-        wind_text = "Wind data is unavailable."
+        if wind is not None:
+            weather_text += f" Wind is around {round(wind)} mph."
+
+    if travel["recommended_mode"] == "Transit":
+        travel_text = (
+            f"Travel intelligence recommends transit. Driving from this origin could rise "
+            f"from {travel['drive_now']} minutes now to {travel['drive_peak']} minutes near event time."
+        )
     else:
-        wind_text = f"Wind speed is around {round(wind)} mph."
+        travel_text = (
+            f"Driving early is acceptable from this origin, but waiting could increase travel time "
+            f"from {travel['drive_now']} minutes to {travel['drive_peak']} minutes."
+        )
 
     brief = (
-        f"{weather_read} Current conditions near MetLife are {condition.lower()}, "
-        f"with temperature around {round(temp)}°F. {rain_text} {wind_text} "
-        "The bigger fan-experience risk remains arrival congestion rather than weather."
+        f"{weather_text} {travel_text} "
+        "The strongest fan-experience risk remains the arrival window, not the event itself."
     )
 
     recommendation = (
-        "Take transit where possible, leave before peak arrival windows, "
-        "and avoid making last-minute ticket or venue decisions."
+        f"Recommended mode: {travel['recommended_mode']}. "
+        "Avoid peak arrival windows, make ticket decisions early, and give yourself buffer time near the stadium."
     )
 
-    confidence = "82%" if weather_score >= 75 else "74%"
-
     return {
-        "headline": "Leave early. Transit is still the safer default.",
+        "headline": f"{travel['recommended_mode']} is the best current recommendation.",
         "brief": brief,
         "recommendation": recommendation,
-        "confidence": confidence
+        "confidence": f"{travel['confidence']}%"
     }
 
 
@@ -204,7 +281,6 @@ weather = get_metlife_weather()
 condition_label = weather_condition_label(weather.get("weather_code"))
 weather_tip = weather_recommendation(weather)
 weather_score = calculate_weather_score(weather)
-fan_brief = generate_fan_brief(weather)
 
 
 # -----------------------------
@@ -371,14 +447,6 @@ div[data-testid="stSegmentedControl"] button {
     margin-bottom: 12px;
 }
 
-.soft-panel {
-    background: white;
-    border: 1px solid #ebe7dd;
-    border-radius: 22px;
-    padding: 30px;
-    box-shadow: 0 12px 28px rgba(23,43,77,.07);
-}
-
 .brief-card {
     padding: 34px;
     border-radius: 28px;
@@ -406,6 +474,20 @@ div[data-testid="stSegmentedControl"] button {
     color: #166534;
     font-weight: 900;
     margin-top: 10px;
+}
+
+.reason-box {
+    padding: 22px;
+    border-radius: 20px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 10px 24px rgba(17,24,39,.06);
+    margin-top: 20px;
+}
+
+.reason-box p {
+    color: #374151;
+    font-size: 17px;
 }
 
 h1, h2, h3, p, label, div {
@@ -454,6 +536,19 @@ page = st.segmented_control(
 
 
 # -----------------------------
+# Global User Input
+# -----------------------------
+
+origin = st.selectbox(
+    "Choose your origin for travel intelligence",
+    ["Montclair", "Verona", "Hoboken", "Jersey City", "NYC"]
+)
+
+travel = get_travel_model(origin)
+fan_brief = generate_fan_brief(weather, travel)
+
+
+# -----------------------------
 # Pages
 # -----------------------------
 
@@ -468,20 +563,20 @@ if page == "Overview":
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("""
+        st.markdown(f"""
         <div class="card">
-            <h3>Fan Experience Score</h3>
-            <div class="metric-number">82</div>
-            <p>Strong baseline, but arrival timing matters.</p>
+            <h3>Recommended Mode</h3>
+            <div class="metric-number">{travel["recommended_mode"]}</div>
+            <p>Best current option from {origin}.</p>
         </div>
         """, unsafe_allow_html=True)
 
     with col2:
         st.markdown(f"""
         <div class="card">
-            <h3>Weather Impact Score</h3>
-            <div class="metric-number">{weather_score}</div>
-            <p>Live signal based on rain, wind, and temperature.</p>
+            <h3>Delay Risk</h3>
+            <div class="metric-number">+{travel["drive_delay"]}</div>
+            <p>Estimated additional driving minutes near event time.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -500,34 +595,28 @@ if page == "Overview":
 elif page == "Decision Engine":
     st.header("Should I leave now?")
 
-    city = st.selectbox(
-        "Where are you traveling from?",
-        ["Montclair", "Verona", "Hoboken", "Jersey City", "NYC"]
-    )
-
-    travel_times = {
-        "Montclair": 28,
-        "Verona": 24,
-        "Hoboken": 31,
-        "Jersey City": 35,
-        "NYC": 42
-    }
-
-    current_time = travel_times[city]
-    peak_time = int(current_time * 1.75)
-    delay = peak_time - current_time
-
     col1, col2, col3 = st.columns(3)
-    col1.metric("Now", f"{current_time} mins")
-    col2.metric("Near event", f"{peak_time} mins")
-    col3.metric("Delay risk", f"+{delay} mins")
+    col1.metric("Drive now", f"{travel['drive_now']} mins")
+    col2.metric("Drive near event", f"{travel['drive_peak']} mins")
+    col3.metric("Transit estimate", f"{travel['transit']} mins")
+
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Recommended mode", travel["recommended_mode"])
+    col5.metric("Parking risk", travel["parking_risk"])
+    col6.metric("Confidence", f"{travel['confidence']}%")
 
     st.markdown(f"""
     <div class="tip">
-        Recommendation: If you are coming from <b>{city}</b>, leave early or take transit.
-        Waiting until peak arrival could add about <b>{delay} minutes</b>.
-        <br><br>
-        Weather note: <b>{weather_tip}</b>
+        Recommendation from <b>{origin}</b>: <b>{travel["recommended_mode"]}</b>.
+        Driving delay risk is approximately <b>+{travel["drive_delay"]} minutes</b>
+        near the event arrival window.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="reason-box">
+        <p><b>Why:</b> {travel["reason"]}</p>
+        <p><b>Weather note:</b> {weather_tip}</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -535,11 +624,19 @@ elif page == "Signal Inputs":
     st.header("Signals we are watching")
 
     signals = pd.DataFrame({
-        "Signal": ["Traffic", "Transit", "Tickets", "Weather", "Watch parties"],
-        "Status": ["Simulated", "Simulated", "Simulated", "Live", "Simulated"],
+        "Signal": ["Traffic", "Transit", "Parking", "Tickets", "Weather", "Watch parties"],
+        "Status": [
+            "Modeled",
+            "Modeled",
+            travel["parking_risk"],
+            "Simulated",
+            "Live",
+            "Simulated"
+        ],
         "Action": [
-            "Leave earlier",
-            "Prefer transit",
+            f"Expect +{travel['drive_delay']} mins if driving late",
+            f"Transit estimate from {origin}: {travel['transit']} mins",
+            f"Parking risk is {travel['parking_risk'].lower()}",
             "Avoid last-minute buying",
             weather_tip,
             "Arrive early"
@@ -563,17 +660,19 @@ elif page == "Product Roadmap":
     st.header("PM Roadmap")
 
     roadmap = pd.DataFrame({
-        "Phase": ["V1", "V2", "V3", "V4"],
+        "Phase": ["V1", "V2", "V3", "V4", "V5"],
         "Build": [
             "Decision-support prototype",
             "Live weather integration",
-            "Traffic, ticket, and transit integrations",
+            "Modeled travel intelligence",
+            "Live traffic, ticket, and transit integrations",
             "Personalized AI recommendations"
         ],
         "PM Value": [
             "Validate user problem",
             "Replace first dummy signal with live data",
-            "Increase usefulness",
+            "Turn static guidance into decision model",
+            "Increase real-world usefulness",
             "Scale into fan copilot"
         ]
     })
