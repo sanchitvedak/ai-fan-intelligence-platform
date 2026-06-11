@@ -39,10 +39,8 @@ def get_metlife_weather():
 
         return {
             "temperature": current.get("temperature_2m"),
-            "precipitation": current.get("precipitation"),
-            "rain": current.get("rain"),
-            "wind_speed": current.get("wind_speed_10m"),
             "rain_probability": rain_probability,
+            "wind_speed": current.get("wind_speed_10m"),
             "weather_code": current.get("weather_code"),
             "source": "Live weather from Open-Meteo"
         }
@@ -50,10 +48,8 @@ def get_metlife_weather():
     except Exception:
         return {
             "temperature": None,
-            "precipitation": None,
-            "rain": None,
-            "wind_speed": None,
             "rain_probability": None,
+            "wind_speed": None,
             "weather_code": None,
             "source": "Weather unavailable"
         }
@@ -67,7 +63,7 @@ def weather_condition_label(code):
         3: "Cloudy",
         45: "Fog",
         48: "Fog",
-        51: "Fog",
+        51: "Light drizzle",
         53: "Drizzle",
         55: "Heavy drizzle",
         61: "Light rain",
@@ -96,26 +92,26 @@ def weather_recommendation(weather):
     wind = weather.get("wind_speed")
 
     if temp is None:
-        return "Weather data is currently unavailable. Use traffic and transit signals for now."
+        return "Weather data is currently unavailable."
 
-    recommendation_parts = []
+    parts = []
 
     if rain_prob is not None and rain_prob >= 50:
-        recommendation_parts.append("Carry rain gear and allow extra travel time.")
+        parts.append("Carry rain gear and allow extra travel time.")
     elif rain_prob is not None and rain_prob >= 25:
-        recommendation_parts.append("Pack a light jacket or umbrella just in case.")
+        parts.append("Pack a light jacket or umbrella just in case.")
     else:
-        recommendation_parts.append("Weather risk looks low right now.")
+        parts.append("Weather risk looks low right now.")
 
     if wind is not None and wind >= 20:
-        recommendation_parts.append("Wind may affect outdoor comfort near the stadium.")
+        parts.append("Wind may affect outdoor comfort near the stadium.")
 
     if temp >= 85:
-        recommendation_parts.append("Hydration will matter for fans arriving early.")
+        parts.append("Hydration will matter for fans arriving early.")
     elif temp <= 45:
-        recommendation_parts.append("Dress warmly, especially if using transit or walking.")
+        parts.append("Dress warmly, especially if using transit or walking.")
 
-    return " ".join(recommendation_parts)
+    return " ".join(parts)
 
 
 def calculate_weather_score(weather):
@@ -147,84 +143,205 @@ def calculate_weather_score(weather):
 
 
 # -----------------------------
-# Travel Intelligence Helper
+# Google Routes API Helper
 # -----------------------------
 
-def get_travel_model(origin):
-    """
-    Simulated travel model for MVP.
-    Later this can be replaced with Google Maps, Mapbox, or NJ Transit APIs.
-    """
+DESTINATION = "MetLife Stadium, East Rutherford, NJ"
 
-    origin_data = {
-        "Montclair": {
-            "drive_now": 28,
-            "drive_peak": 49,
-            "transit": 44,
-            "parking_risk": "High",
-            "transit_reliability": "Medium",
-            "reason": "Driving is fast now, but peak congestion near Route 3 and stadium exits can erase the advantage."
-        },
-        "Verona": {
-            "drive_now": 24,
-            "drive_peak": 42,
-            "transit": 48,
-            "parking_risk": "High",
-            "transit_reliability": "Low",
-            "reason": "Driving is still the fastest option, but the delay risk rises sharply closer to the event."
-        },
-        "Hoboken": {
-            "drive_now": 31,
-            "drive_peak": 61,
-            "transit": 39,
-            "parking_risk": "High",
-            "transit_reliability": "High",
-            "reason": "Transit is more predictable than driving from dense urban areas during event arrival windows."
-        },
-        "Jersey City": {
-            "drive_now": 35,
-            "drive_peak": 67,
-            "transit": 45,
-            "parking_risk": "High",
-            "transit_reliability": "High",
-            "reason": "Driving delay risk is high and transit provides a more reliable arrival window."
-        },
-        "NYC": {
-            "drive_now": 42,
-            "drive_peak": 78,
-            "transit": 52,
-            "parking_risk": "Very High",
-            "transit_reliability": "High",
-            "reason": "Cross-Hudson traffic and stadium-area congestion make transit the safer default."
+ORIGINS = {
+    "Montclair": "Montclair, NJ",
+    "Verona": "Verona, NJ",
+    "Hoboken": "Hoboken, NJ",
+    "Jersey City": "Jersey City, NJ",
+    "NYC": "Times Square, New York, NY"
+}
+
+TRANSIT_ESTIMATES = {
+    "Montclair": 44,
+    "Verona": 48,
+    "Hoboken": 39,
+    "Jersey City": 45,
+    "NYC": 52
+}
+
+
+@st.cache_data(ttl=300)
+def get_live_drive_time(origin_name):
+    api_key = st.secrets.get("GOOGLE_MAPS_API_KEY", None)
+
+    if not api_key:
+        return {
+            "available": False,
+            "drive_now": None,
+            "drive_static": None,
+            "distance_miles": None,
+            "traffic_delay": None,
+            "source": "Google Maps API key missing"
         }
+
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters"
     }
 
-    data = origin_data[origin]
+    payload = {
+        "origin": {
+            "address": ORIGINS[origin_name]
+        },
+        "destination": {
+            "address": DESTINATION
+        },
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "computeAlternativeRoutes": False,
+        "languageCode": "en-US",
+        "units": "IMPERIAL"
+    }
 
-    drive_delay = data["drive_peak"] - data["drive_now"]
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=12)
+        response.raise_for_status()
+        data = response.json()
 
-    if data["transit"] < data["drive_peak"]:
+        routes = data.get("routes", [])
+        if not routes:
+            raise ValueError("No route returned")
+
+        route = routes[0]
+
+        duration_seconds = int(route["duration"].replace("s", ""))
+        static_seconds = int(route["staticDuration"].replace("s", ""))
+        distance_meters = route.get("distanceMeters", 0)
+
+        drive_now = round(duration_seconds / 60)
+        drive_static = round(static_seconds / 60)
+        traffic_delay = max(0, drive_now - drive_static)
+        distance_miles = round(distance_meters / 1609.34, 1)
+
+        return {
+            "available": True,
+            "drive_now": drive_now,
+            "drive_static": drive_static,
+            "distance_miles": distance_miles,
+            "traffic_delay": traffic_delay,
+            "source": "Live drive time from Google Routes API"
+        }
+
+    except Exception as e:
+        return {
+            "available": False,
+            "drive_now": None,
+            "drive_static": None,
+            "distance_miles": None,
+            "traffic_delay": None,
+            "source": f"Google Routes unavailable: {str(e)}"
+        }
+
+
+def get_travel_model(origin):
+    live = get_live_drive_time(origin)
+
+    fallback_drive_now = {
+        "Montclair": 28,
+        "Verona": 24,
+        "Hoboken": 31,
+        "Jersey City": 35,
+        "NYC": 42
+    }
+
+    fallback_peak = {
+        "Montclair": 49,
+        "Verona": 42,
+        "Hoboken": 61,
+        "Jersey City": 67,
+        "NYC": 78
+    }
+
+    parking_risk = {
+        "Montclair": "High",
+        "Verona": "High",
+        "Hoboken": "High",
+        "Jersey City": "High",
+        "NYC": "Very High"
+    }
+
+    transit_reliability = {
+        "Montclair": "Medium",
+        "Verona": "Low",
+        "Hoboken": "High",
+        "Jersey City": "High",
+        "NYC": "High"
+    }
+
+    if live["available"]:
+        drive_now = live["drive_now"]
+        drive_static = live["drive_static"]
+        traffic_delay = live["traffic_delay"]
+
+        if traffic_delay >= 12:
+            peak_multiplier = 1.55
+        elif traffic_delay >= 6:
+            peak_multiplier = 1.4
+        else:
+            peak_multiplier = 1.25
+
+        drive_peak = round(drive_now * peak_multiplier)
+        data_source = "Live Google traffic"
+    else:
+        drive_now = fallback_drive_now[origin]
+        drive_static = fallback_drive_now[origin]
+        traffic_delay = drive_peak = None
+        drive_peak = fallback_peak[origin]
+        data_source = "Fallback model"
+
+    transit = TRANSIT_ESTIMATES[origin]
+    drive_delay = max(0, drive_peak - drive_now)
+
+    if transit < drive_peak or parking_risk[origin] == "Very High":
         recommended_mode = "Transit"
     else:
         recommended_mode = "Drive early"
 
-    if drive_delay >= 30:
-        confidence = 86
-    elif drive_delay >= 20:
-        confidence = 78
+    if live["available"]:
+        confidence = 88 if recommended_mode == "Transit" else 82
     else:
-        confidence = 70
+        confidence = 74
 
-    if data["parking_risk"] == "Very High":
-        confidence += 5
+    if parking_risk[origin] == "Very High":
+        confidence += 4
 
-    confidence = min(confidence, 92)
+    confidence = min(confidence, 94)
+
+    if recommended_mode == "Transit":
+        reason = (
+            f"Live driving time is {drive_now} minutes, but event-window driving could reach "
+            f"{drive_peak} minutes. Transit is estimated around {transit} minutes and avoids parking risk."
+        )
+    else:
+        reason = (
+            f"Driving is currently {drive_now} minutes and remains competitive if you leave before "
+            f"the peak arrival window. Waiting could increase drive time to around {drive_peak} minutes."
+        )
 
     return {
-        **data,
+        "live_available": live["available"],
+        "drive_now": drive_now,
+        "drive_static": drive_static,
+        "drive_peak": drive_peak,
+        "distance_miles": live["distance_miles"],
+        "traffic_delay_live": traffic_delay,
+        "transit": transit,
         "drive_delay": drive_delay,
         "recommended_mode": recommended_mode,
-        "confidence": confidence
+        "parking_risk": parking_risk[origin],
+        "transit_reliability": transit_reliability[origin],
+        "confidence": confidence,
+        "reason": reason,
+        "source": data_source,
+        "raw_source": live["source"]
     }
 
 
@@ -237,10 +354,7 @@ def generate_fan_brief(weather, travel):
     if temp is None:
         weather_text = "Live weather is currently unavailable."
     else:
-        weather_text = (
-            f"Weather near MetLife is {condition.lower()} with temperature around "
-            f"{round(temp)}°F."
-        )
+        weather_text = f"Weather near MetLife is {condition.lower()} with temperature around {round(temp)}°F."
 
         if rain_prob is not None:
             weather_text += f" Rain risk is {rain_prob}%."
@@ -248,21 +362,16 @@ def generate_fan_brief(weather, travel):
         if wind is not None:
             weather_text += f" Wind is around {round(wind)} mph."
 
-    if travel["recommended_mode"] == "Transit":
+    if travel["live_available"]:
         travel_text = (
-            f"Travel intelligence recommends transit. Driving from this origin could rise "
-            f"from {travel['drive_now']} minutes now to {travel['drive_peak']} minutes near event time."
+            f"Live Google traffic shows current driving time at {travel['drive_now']} minutes. "
+            f"Event-window travel could rise to around {travel['drive_peak']} minutes."
         )
     else:
         travel_text = (
-            f"Driving early is acceptable from this origin, but waiting could increase travel time "
-            f"from {travel['drive_now']} minutes to {travel['drive_peak']} minutes."
+            f"Traffic is currently modeled using fallback estimates. Driving now is estimated at "
+            f"{travel['drive_now']} minutes and could rise to {travel['drive_peak']} minutes near event time."
         )
-
-    brief = (
-        f"{weather_text} {travel_text} "
-        "The strongest fan-experience risk remains the arrival window, not the event itself."
-    )
 
     recommendation = (
         f"Recommended mode: {travel['recommended_mode']}. "
@@ -271,7 +380,7 @@ def generate_fan_brief(weather, travel):
 
     return {
         "headline": f"{travel['recommended_mode']} is the best current recommendation.",
-        "brief": brief,
+        "brief": f"{weather_text} {travel_text} The strongest fan-experience risk remains the arrival window.",
         "recommendation": recommendation,
         "confidence": f"{travel['confidence']}%"
     }
@@ -541,7 +650,7 @@ page = st.segmented_control(
 
 origin = st.selectbox(
     "Choose your origin for travel intelligence",
-    ["Montclair", "Verona", "Hoboken", "Jersey City", "NYC"]
+    list(ORIGINS.keys())
 )
 
 travel = get_travel_model(origin)
@@ -572,11 +681,12 @@ if page == "Overview":
         """, unsafe_allow_html=True)
 
     with col2:
+        distance = "N/A" if travel["distance_miles"] is None else f"{travel['distance_miles']} mi"
         st.markdown(f"""
         <div class="card">
-            <h3>Delay Risk</h3>
-            <div class="metric-number">+{travel["drive_delay"]}</div>
-            <p>Estimated additional driving minutes near event time.</p>
+            <h3>Live Drive Time</h3>
+            <div class="metric-number">{travel["drive_now"]} min</div>
+            <p>{distance} · Source: {travel["source"]}</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -597,7 +707,7 @@ elif page == "Decision Engine":
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Drive now", f"{travel['drive_now']} mins")
-    col2.metric("Drive near event", f"{travel['drive_peak']} mins")
+    col2.metric("Projected event drive", f"{travel['drive_peak']} mins")
     col3.metric("Transit estimate", f"{travel['transit']} mins")
 
     col4, col5, col6 = st.columns(3)
@@ -608,8 +718,8 @@ elif page == "Decision Engine":
     st.markdown(f"""
     <div class="tip">
         Recommendation from <b>{origin}</b>: <b>{travel["recommended_mode"]}</b>.
-        Driving delay risk is approximately <b>+{travel["drive_delay"]} minutes</b>
-        near the event arrival window.
+        Driving delay risk near the event window is approximately
+        <b>+{travel["drive_delay"]} minutes</b>.
     </div>
     """, unsafe_allow_html=True)
 
@@ -617,6 +727,7 @@ elif page == "Decision Engine":
     <div class="reason-box">
         <p><b>Why:</b> {travel["reason"]}</p>
         <p><b>Weather note:</b> {weather_tip}</p>
+        <p><b>Data source:</b> {travel["raw_source"]}</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -626,7 +737,7 @@ elif page == "Signal Inputs":
     signals = pd.DataFrame({
         "Signal": ["Traffic", "Transit", "Parking", "Tickets", "Weather", "Watch parties"],
         "Status": [
-            "Modeled",
+            "Live" if travel["live_available"] else "Fallback model",
             "Modeled",
             travel["parking_risk"],
             "Simulated",
@@ -634,7 +745,7 @@ elif page == "Signal Inputs":
             "Simulated"
         ],
         "Action": [
-            f"Expect +{travel['drive_delay']} mins if driving late",
+            f"Drive now: {travel['drive_now']} mins; projected event drive: {travel['drive_peak']} mins",
             f"Transit estimate from {origin}: {travel['transit']} mins",
             f"Parking risk is {travel['parking_risk'].lower()}",
             "Avoid last-minute buying",
@@ -660,20 +771,22 @@ elif page == "Product Roadmap":
     st.header("PM Roadmap")
 
     roadmap = pd.DataFrame({
-        "Phase": ["V1", "V2", "V3", "V4", "V5"],
+        "Phase": ["V1", "V2", "V3", "V4", "V5", "V6"],
         "Build": [
             "Decision-support prototype",
             "Live weather integration",
             "Modeled travel intelligence",
-            "Live traffic, ticket, and transit integrations",
-            "Personalized AI recommendations"
+            "Live Google traffic integration",
+            "Fan personas",
+            "World Cup insights page"
         ],
         "PM Value": [
             "Validate user problem",
             "Replace first dummy signal with live data",
             "Turn static guidance into decision model",
-            "Increase real-world usefulness",
-            "Scale into fan copilot"
+            "Make travel recommendation actionable",
+            "Personalize recommendations by user type",
+            "Create shareable insights and content"
         ]
     })
 
