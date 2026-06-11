@@ -188,12 +188,8 @@ def get_live_drive_time(origin_name):
     }
 
     payload = {
-        "origin": {
-            "address": ORIGINS[origin_name]
-        },
-        "destination": {
-            "address": DESTINATION
-        },
+        "origin": {"address": ORIGINS[origin_name]},
+        "destination": {"address": DESTINATION},
         "travelMode": "DRIVE",
         "routingPreference": "TRAFFIC_AWARE",
         "computeAlternativeRoutes": False,
@@ -293,7 +289,7 @@ def get_travel_model(origin):
     else:
         drive_now = fallback_drive_now[origin]
         drive_static = fallback_drive_now[origin]
-        traffic_delay = drive_peak = None
+        traffic_delay = None
         drive_peak = fallback_peak[origin]
         data_source = "Fallback model"
 
@@ -345,7 +341,110 @@ def get_travel_model(origin):
     }
 
 
-def generate_fan_brief(weather, travel):
+# -----------------------------
+# Personalization Helper
+# -----------------------------
+
+def get_personalized_match_plan(fan_type, travel_group, primary_goal, origin, travel, weather_score):
+    score = 78
+    reasons = []
+    actions = []
+
+    recommended_mode = travel["recommended_mode"]
+
+    if fan_type == "Local NJ Fan":
+        reasons.append("You likely know the area, so timing matters more than navigation complexity.")
+        actions.append("Leave before the peak arrival window.")
+        score += 4
+
+    elif fan_type == "NYC Commuter":
+        recommended_mode = "Transit"
+        reasons.append("Cross-Hudson traffic and stadium parking make transit the safer default.")
+        actions.append("Use transit and avoid post-event rideshare surge.")
+        score += 5
+
+    elif fan_type == "US Fan Traveling to NJ":
+        reasons.append("You may be less familiar with stadium-area traffic, so extra buffer matters.")
+        actions.append("Arrive at least 75 minutes before kickoff.")
+        score += 2
+
+    elif fan_type == "International Visitor":
+        recommended_mode = "Transit"
+        reasons.append("Transit reduces unfamiliar parking, routing, and post-match driving complexity.")
+        actions.append("Arrive 90 minutes early and pre-plan your return route.")
+        score += 6
+
+    if travel_group == "Solo":
+        reasons.append("Solo travel gives you more flexibility to adjust timing.")
+        actions.append("Use the fastest available option and monitor live traffic.")
+        score += 3
+
+    elif travel_group == "Partner":
+        reasons.append("Traveling with a partner balances flexibility with comfort.")
+        actions.append("Pick a clear meeting point before arriving.")
+        score += 2
+
+    elif travel_group == "Family":
+        reasons.append("Family travel increases the importance of predictability, comfort, and buffer time.")
+        actions.append("Add extra time for walking, snacks, bathrooms, and security.")
+        score -= 2
+
+    elif travel_group == "Friends":
+        reasons.append("Group coordination makes transit and early arrival more valuable.")
+        actions.append("Choose a departure time everyone can commit to.")
+        score += 1
+
+    elif travel_group == "Corporate Group":
+        reasons.append("Corporate groups need predictable arrival and lower coordination risk.")
+        actions.append("Use a fixed departure time and share the route plan in advance.")
+        score += 1
+
+    if primary_goal == "Fastest Arrival":
+        reasons.append("Your goal prioritizes speed over comfort or cost.")
+        actions.append("Leave now if live drive time is favorable.")
+
+    elif primary_goal == "Lowest Cost":
+        recommended_mode = "Transit"
+        reasons.append("Transit typically reduces parking and surge pricing exposure.")
+        actions.append("Avoid stadium parking and post-event rideshare if possible.")
+
+    elif primary_goal == "Least Stress":
+        recommended_mode = "Transit"
+        reasons.append("Predictability matters more than shaving off a few minutes.")
+        actions.append("Use transit, leave early, and avoid tight arrival windows.")
+        score += 4
+
+    elif primary_goal == "Best Experience":
+        reasons.append("A smoother experience depends on arriving early, not rushing.")
+        actions.append("Arrive early enough to explore, eat, and avoid last-minute lines.")
+        score += 3
+
+    if travel["drive_delay"] >= 25:
+        reasons.append(f"Driving delay risk is high at approximately +{travel['drive_delay']} minutes.")
+        score -= 4
+    elif travel["drive_delay"] >= 15:
+        reasons.append(f"Driving delay risk is moderate at approximately +{travel['drive_delay']} minutes.")
+        score -= 2
+
+    if weather_score >= 80:
+        reasons.append("Weather conditions are favorable.")
+        score += 3
+    elif weather_score < 65:
+        reasons.append("Weather could create comfort issues.")
+        actions.append("Pack weather protection and add walking buffer.")
+        score -= 4
+
+    score = max(45, min(score, 96))
+
+    return {
+        "recommended_mode": recommended_mode,
+        "score": score,
+        "reasons": reasons[:5],
+        "actions": actions[:5]
+    }
+
+
+def generate_fan_brief(weather, travel, match_plan, fan_type, travel_group, primary_goal):
     temp = weather.get("temperature")
     rain_prob = weather.get("rain_probability")
     wind = weather.get("wind_speed")
@@ -364,8 +463,9 @@ def generate_fan_brief(weather, travel):
 
     if travel["live_available"]:
         travel_text = (
-            f"Live Google traffic shows current driving time at {travel['drive_now']} minutes. "
-            f"Event-window travel could rise to around {travel['drive_peak']} minutes."
+            f"Live Google traffic shows current driving time from the selected origin at "
+            f"{travel['drive_now']} minutes. Event-window travel could rise to around "
+            f"{travel['drive_peak']} minutes."
         )
     else:
         travel_text = (
@@ -373,16 +473,18 @@ def generate_fan_brief(weather, travel):
             f"{travel['drive_now']} minutes and could rise to {travel['drive_peak']} minutes near event time."
         )
 
+    profile_text = f"Profile: {fan_type}, traveling with {travel_group.lower()}, optimizing for {primary_goal.lower()}."
+
     recommendation = (
-        f"Recommended mode: {travel['recommended_mode']}. "
-        "Avoid peak arrival windows, make ticket decisions early, and give yourself buffer time near the stadium."
+        f"Recommended mode: {match_plan['recommended_mode']}. "
+        f"Top action: {match_plan['actions'][0] if match_plan['actions'] else 'Leave early and monitor conditions.'}"
     )
 
     return {
-        "headline": f"{travel['recommended_mode']} is the best current recommendation.",
-        "brief": f"{weather_text} {travel_text} The strongest fan-experience risk remains the arrival window.",
+        "headline": f"{match_plan['recommended_mode']} is the best match plan for this profile.",
+        "brief": f"{profile_text} {weather_text} {travel_text}",
         "recommendation": recommendation,
-        "confidence": f"{travel['confidence']}%"
+        "confidence": f"{match_plan['score']}%"
     }
 
 
@@ -465,6 +567,15 @@ div[data-testid="stSegmentedControl"] button {
     border-radius: 16px !important;
     font-size: 18px !important;
     font-weight: 800 !important;
+}
+
+.profile-panel {
+    padding: 24px;
+    border-radius: 26px;
+    background: rgba(255,255,255,.9);
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 12px 30px rgba(17,24,39,.07);
+    margin-bottom: 28px;
 }
 
 .action-panel {
@@ -569,7 +680,7 @@ div[data-testid="stSegmentedControl"] button {
     margin-bottom: 14px;
 }
 
-.brief-card p {
+.brief-card p, .brief-card li {
     color: #374151;
     font-size: 19px;
     line-height: 1.65;
@@ -645,16 +756,43 @@ page = st.segmented_control(
 
 
 # -----------------------------
-# Global User Input
+# Match Plan Inputs
 # -----------------------------
 
-origin = st.selectbox(
-    "Choose your origin for travel intelligence",
-    list(ORIGINS.keys())
-)
+st.markdown('<div class="profile-panel">', unsafe_allow_html=True)
+st.subheader("Build Your Match Plan")
+
+col_a, col_b, col_c, col_d = st.columns(4)
+
+with col_a:
+    fan_type = st.selectbox(
+        "Fan type",
+        ["Local NJ Fan", "NYC Commuter", "US Fan Traveling to NJ", "International Visitor"]
+    )
+
+with col_b:
+    travel_group = st.selectbox(
+        "Traveling with",
+        ["Solo", "Partner", "Family", "Friends", "Corporate Group"]
+    )
+
+with col_c:
+    primary_goal = st.selectbox(
+        "Primary goal",
+        ["Fastest Arrival", "Lowest Cost", "Least Stress", "Best Experience"]
+    )
+
+with col_d:
+    origin = st.selectbox(
+        "Origin",
+        list(ORIGINS.keys())
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 travel = get_travel_model(origin)
-fan_brief = generate_fan_brief(weather, travel)
+match_plan = get_personalized_match_plan(fan_type, travel_group, primary_goal, origin, travel, weather_score)
+fan_brief = generate_fan_brief(weather, travel, match_plan, fan_type, travel_group, primary_goal)
 
 
 # -----------------------------
@@ -674,9 +812,9 @@ if page == "Overview":
     with col1:
         st.markdown(f"""
         <div class="card">
-            <h3>Recommended Mode</h3>
-            <div class="metric-number">{travel["recommended_mode"]}</div>
-            <p>Best current option from {origin}.</p>
+            <h3>Match Plan Score</h3>
+            <div class="metric-number">{match_plan["score"]}</div>
+            <p>Personalized score based on profile, traffic, and weather.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -711,13 +849,13 @@ elif page == "Decision Engine":
     col3.metric("Transit estimate", f"{travel['transit']} mins")
 
     col4, col5, col6 = st.columns(3)
-    col4.metric("Recommended mode", travel["recommended_mode"])
+    col4.metric("Recommended mode", match_plan["recommended_mode"])
     col5.metric("Parking risk", travel["parking_risk"])
-    col6.metric("Confidence", f"{travel['confidence']}%")
+    col6.metric("Match plan score", f"{match_plan['score']}")
 
     st.markdown(f"""
     <div class="tip">
-        Recommendation from <b>{origin}</b>: <b>{travel["recommended_mode"]}</b>.
+        Recommendation from <b>{origin}</b>: <b>{match_plan["recommended_mode"]}</b>.
         Driving delay risk near the event window is approximately
         <b>+{travel["drive_delay"]} minutes</b>.
     </div>
@@ -725,6 +863,7 @@ elif page == "Decision Engine":
 
     st.markdown(f"""
     <div class="reason-box">
+        <p><b>Profile:</b> {fan_type} traveling with {travel_group.lower()}, optimizing for {primary_goal.lower()}.</p>
         <p><b>Why:</b> {travel["reason"]}</p>
         <p><b>Weather note:</b> {weather_tip}</p>
         <p><b>Data source:</b> {travel["raw_source"]}</p>
@@ -735,21 +874,37 @@ elif page == "Signal Inputs":
     st.header("Signals we are watching")
 
     signals = pd.DataFrame({
-        "Signal": ["Traffic", "Transit", "Parking", "Tickets", "Weather", "Watch parties"],
+        "Signal": [
+            "Fan type",
+            "Travel group",
+            "Primary goal",
+            "Traffic",
+            "Transit",
+            "Parking",
+            "Weather",
+            "Tickets",
+            "Watch parties"
+        ],
         "Status": [
+            fan_type,
+            travel_group,
+            primary_goal,
             "Live" if travel["live_available"] else "Fallback model",
             "Modeled",
             travel["parking_risk"],
-            "Simulated",
             "Live",
+            "Simulated",
             "Simulated"
         ],
         "Action": [
+            "Personalizes recommendation logic",
+            "Adjusts buffer and comfort assumptions",
+            "Changes optimization priority",
             f"Drive now: {travel['drive_now']} mins; projected event drive: {travel['drive_peak']} mins",
             f"Transit estimate from {origin}: {travel['transit']} mins",
             f"Parking risk is {travel['parking_risk'].lower()}",
-            "Avoid last-minute buying",
             weather_tip,
+            "Avoid last-minute buying",
             "Arrive early"
         ]
     })
@@ -757,13 +912,23 @@ elif page == "Signal Inputs":
     st.dataframe(signals, use_container_width=True, hide_index=True)
 
 elif page == "AI Brief":
+    actions_html = "".join([f"<li>{action}</li>" for action in match_plan["actions"]])
+    reasons_html = "".join([f"<li>{reason}</li>" for reason in match_plan["reasons"]])
+
     st.markdown(f"""
     <div class="brief-card">
-        <h2>🧠 Today's Fan Intelligence Brief</h2>
+        <h2>🧠 Today's Personalized Match Plan</h2>
         <p><b>{fan_brief["headline"]}</b></p>
         <p>{fan_brief["brief"]}</p>
         <p><b>Recommended action:</b> {fan_brief["recommendation"]}</p>
-        <div class="confidence-pill">Recommendation confidence: {fan_brief["confidence"]}</div>
+
+        <h3>Why this recommendation</h3>
+        <ul>{reasons_html}</ul>
+
+        <h3>Top actions</h3>
+        <ul>{actions_html}</ul>
+
+        <div class="confidence-pill">Match Plan Score: {match_plan["score"]}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -777,7 +942,7 @@ elif page == "Product Roadmap":
             "Live weather integration",
             "Modeled travel intelligence",
             "Live Google traffic integration",
-            "Fan personas",
+            "Fan personas and match planning",
             "World Cup insights page"
         ],
         "PM Value": [
@@ -785,7 +950,7 @@ elif page == "Product Roadmap":
             "Replace first dummy signal with live data",
             "Turn static guidance into decision model",
             "Make travel recommendation actionable",
-            "Personalize recommendations by user type",
+            "Personalize recommendations by user context",
             "Create shareable insights and content"
         ]
     })
